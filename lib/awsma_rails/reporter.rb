@@ -24,8 +24,23 @@ module AwsmaRails
     # @param  [Hash]    metrics     The custom events metrics (optional)
     # @return [Net::HTTP] response of analytics report (response code should be 202 if successful)
     def report_event(client_id, session_id, app_title, app_package_name, event_name, attributes = {}, metrics = {})
+      events = [{
+                    'event_name' => event_name,
+                    'session_id' => session_id,
+                    'attributes' => attributes,
+                    'metrics' => metrics
+                }]
+
+      self.report_events(client_id, app_title, app_package_name, events)
+    end
+
+    # @param  [String]  client_id   The users mobile analytics client id
+    # @param  [String]  app_title   The app title (ex: Fun Game)
+    # @param  [String]  app_package_name  The app package name (ex: com.example.fungame)
+    # @return [Net::HTTP] response of analytics report (response code should be 202 if successful)
+    def report_events(client_id, app_title, app_package_name, events = [{'event_name' => '', 'session_id' => '', 'attributes' => {}, 'metrics' => {}}])
       awsma_request = AwsmaPostRequest.new(@awsma_endpoint_url,
-                                           create_analytics_data(event_name, session_id, attributes, metrics),
+                                           create_analytics_batch_data(events),
                                            @user_agent,
                                            create_client_context(client_id, app_title, app_package_name),
                                            @cognito_credentials)
@@ -43,40 +58,48 @@ module AwsmaRails
 
     private
 
-    def create_analytics_data(event_name, session_id, attributes, metrics)
-      timestamp = Time.now.utc.iso8601
+    def create_analytics_data(events)
+      request_events = []
+      events.inject(request_events) do |request_events, event|
+        event = event.symbolize_keys
+        timestamp = Time.now.utc.iso8601
 
-      aws_analytics_data = {'events' => [{
-                                             'eventType' => event_name,
-                                             'timestamp' => timestamp,
-                                             'version' => 'v2.0',
-                                             'session' => {'id' => session_id,
-                                                           'startTimestamp' => timestamp},
-                                             'attributes' => attributes,
-                                             'metrics' => metrics
-                                         }]}
+        request_events << {
+          'eventType' => event[:event_name],
+          'timestamp' => timestamp,
+          'version' => 'v2.0',
+          'session' => {
+              'id' => event[:session_id],
+              'startTimestamp' => timestamp
+          },
+          'attributes' => event[:attributes],
+          'metrics' => event[:metrics]
+        }
+      end
+
+      aws_analytics_data = { 'events' => request_events}
 
       aws_analytics_data.to_json
     end
 
     def create_client_context(client_id, app_title, app_package_name)
       aws_client_context = {
-          'client' => {
-              'client_id' => client_id,
-              'app_title' => app_title,
-              'app_package_name' => app_package_name
-          },
-          'env' => {
-              'platform' => 'linux',
-              'model' => 'SERVER'
-          },
-          'services' => {
-              'mobile_analytics' => {
-                  'app_id' => @app_id,
-                  'sdk_name' => 'awsma_rails',
-                  'sdk_version' => AwsmaRails::VERSION
-              }
+        'client' => {
+          'client_id' => client_id,
+          'app_title' => app_title,
+          'app_package_name' => app_package_name
+        },
+        'env' => {
+          'platform' => 'linux',
+          'model' => 'SERVER'
+        },
+        'services' => {
+          'mobile_analytics' => {
+            'app_id' => @app_id,
+            'sdk_name' => 'awsma_rails',
+            'sdk_version' => AwsmaRails::VERSION
           }
+        }
       }
 
       aws_client_context.to_json
